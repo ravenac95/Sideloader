@@ -54,14 +54,6 @@ jobs:
           file bin/sideloader
           lipo -archs bin/sideloader | grep -qw "${{ matrix.arch }}"
 
-      - name: Library lookup diagnostics
-        continue-on-error: true
-        run: |
-          ls -la "$(brew --prefix)/lib" | grep -iE 'plist|imobiledevice|usbmuxd|libssl|libcrypto' || true
-          for l in libplist-2.0.4.dylib libplist-2.0.3.dylib libimobiledevice-1.0.6.dylib libusbmuxd-2.0.7.dylib; do
-            DYLD_PRINT_SEARCHING=1 DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" "$(brew --prefix)/bin/python3" -c "import ctypes; ctypes.CDLL('$l'); print('loaded $l')" 2>&1 | tail -3 || true
-          done
-
       - name: Smoke test
         run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
 
@@ -81,9 +73,9 @@ jobs:
           grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
           if ! grep -q 'Device provisioned successfully' tls-check.log; then
             if [ "${{ matrix.arch }}" = arm64 ]; then
-              # Known: Provision's loader crashes running Apple's arm64 Android library on
-              # Apple Silicon. The x86_64 build works there under Rosetta.
-              echo "::warning::Provisioning did not complete on arm64 (Provision loader issue). Use the x86_64 build under Rosetta."
+              # Known: Homebrew's arm64 libplist 2.8 ships libplist-2.0.12.dylib, but the
+              # libplist-d binding only looks for libplist-2.0.3/2.0.4.dylib.
+              echo "::warning::Provisioning did not complete on arm64: libplist-d cannot find Homebrew's libplist 2.8 (libplist-2.0.12.dylib)."
             else
               exit 1
             fi

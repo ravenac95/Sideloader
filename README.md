@@ -137,9 +137,9 @@ use of SIMD instructions that cannot be compiled by GDC yet).
 ### MacOS
 
 Prebuilt binaries for Apple Silicon and Intel Macs are produced by the "macOS builds"
-GitHub Actions workflow, with a `.sha256` checksum next to each binary. On Apple Silicon, use the
-x86_64 build under Rosetta for now: the arm64 build crashes while provisioning (inside the Android
-library loader). To build it yourself:
+GitHub Actions workflow, with a `.sha256` checksum next to each binary. Known issue on Apple
+Silicon: current Homebrew ships libplist 2.8 (`libplist-2.0.12.dylib`), which the libplist-d
+binding does not look for yet, so Sideloader fails at its first plist operation. To build it yourself:
 
 1. Install the libraries with [Homebrew](https://brew.sh):
    `brew install libimobiledevice libplist openssl@3`
