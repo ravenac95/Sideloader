@@ -1,107 +1,32 @@
 name: macOS builds
 
-# Native macOS builds of the CLI, on GitHub's own macOS runners (no cross-compilation,
-# no third-party SDK download). Pushing a tag starting with "v" also publishes the
-# binaries and their SHA-256 checksums as a GitHub release.
-
 on:
   push:
-    branches: ['**']
-    tags: ['v*']
-  pull_request:
-  workflow_dispatch:
-
-permissions:
-  contents: read
+    branches: ['ci-debug-macos']
 
 jobs:
-  build:
+  experiment:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15        # Apple Silicon
-            arch: arm64
-          - runner: macos-15-intel  # Intel
-            arch: x86_64
-
-    name: Build CLI for macOS ${{ matrix.arch }}
+          - { runner: macos-15,       compiler: ldc-1.36.0, dflags: '-L-ld_classic' }
+          - { runner: macos-15,       compiler: ldc-1.41.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-latest, dflags: '' }
+          - { runner: macos-15-intel, compiler: ldc-1.41.0, dflags: '' }
+          - { runner: macos-15-intel, compiler: ldc-latest, dflags: '' }
+    name: ${{ matrix.runner }} ${{ matrix.compiler }} ${{ matrix.dflags }}
     runs-on: ${{ matrix.runner }}
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set-up D compiler
-        uses: dlang-community/setup-dlang@v2
+      - uses: dlang-community/setup-dlang@v2
         with:
-          compiler: ldc-1.36.0
-
-      - name: Install runtime libraries (for the smoke test)
-        run: brew install libimobiledevice libplist openssl@3
-
-      - name: Write version file
-        uses: ./.github/actions/write-version-file
-        with:
-          version-text: 'Sideloader macOS build, ${{ github.ref_name }}, commit ${{ github.sha }}'
-
+          compiler: ${{ matrix.compiler }}
+      - run: brew install libimobiledevice libplist openssl@3
+      - run: ldc2 --version > ver.txt; head -1 ver.txt
       - name: Build
-        run: dub build -b release-debug --compiler=ldc2 :cli-frontend
-
-      - name: Check architecture
         run: |
-          file bin/sideloader
-          lipo -archs bin/sideloader | grep -qw "${{ matrix.arch }}"
-
-      - name: Backtrace (debug)
-        continue-on-error: true
-        run: |
-          DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" lldb --batch -o run -o "bt 40" -o "image list -b" -- ./bin/sideloader --help 2>&1 | head -150
-
-      - name: Without DYLD path (debug)
-        continue-on-error: true
-        run: ./bin/sideloader --help; echo "exit=$?"
-
-      - name: Upstream commit for comparison (debug)
-        continue-on-error: true
-        run: |
-          git fetch --depth 1 origin 631abccace368ececbbd4ed82c35a245834e3af0
-          git worktree add ../upstream 631abccace368ececbbd4ed82c35a245834e3af0
-          cd ../upstream && dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | tail -3
-          DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help; echo "upstream exit=$?"
-
-      - name: Smoke test
+          if [ -n "${{ matrix.dflags }}" ]; then export DFLAGS="-g -O ${{ matrix.dflags }}"; fi
+          dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | grep -vE 'Deprecation|which calls|^\s+/' | tail -15
+      - name: Run
         run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
-
-      - name: Package
-        run: |
-          mkdir -p dist
-          name="sideloader-cli-macos-${{ matrix.arch }}"
-          cp bin/sideloader "dist/$name"
-          chmod +x "dist/$name"
-          (cd dist && shasum -a 256 "$name" > "$name.sha256")
-          cat "dist/$name.sha256"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sideloader-cli-macos-${{ matrix.arch }}
-          path: dist/*
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "${{ github.ref_name }}" -R "${{ github.repository }}" >/dev/null 2>&1 \
-            || gh release create "${{ github.ref_name }}" -R "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "Built by GitHub Actions from commit ${{ github.sha }}."
-          gh release upload "${{ github.ref_name }}" -R "${{ github.repository }}" --clobber dist/*
