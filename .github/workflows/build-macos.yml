@@ -10,11 +10,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15,       compiler: ldc-1.39.0, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-1.40.0, dflags: '' }
           - { runner: macos-15,       compiler: ldc-1.40.1, dflags: '' }
-          - { runner: macos-15-intel, compiler: ldc-1.40.1, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-1.36.0, dflags: 'target12' }
+          - { runner: macos-15,       compiler: ldc-1.41.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-latest, dflags: '' }
+          - { runner: macos-15-intel, compiler: ldc-1.41.0, dflags: '' }
+          - { runner: macos-15-intel, compiler: ldc-latest, dflags: '' }
     name: ${{ matrix.runner }} ${{ matrix.compiler }} ${{ matrix.dflags }}
     runs-on: ${{ matrix.runner }}
     steps:
