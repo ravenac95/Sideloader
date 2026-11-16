@@ -10,11 +10,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15,       compiler: ldc-1.36.0, dflags: '-L-ld_classic' }
-          - { runner: macos-15,       compiler: ldc-1.41.0, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-latest, dflags: '' }
-          - { runner: macos-15-intel, compiler: ldc-1.41.0, dflags: '' }
-          - { runner: macos-15-intel, compiler: ldc-latest, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.36.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.37.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.38.0, dflags: '' }
+          - { runner: macos-15-intel, compiler: ldc-1.38.0, dflags: '' }
     name: ${{ matrix.runner }} ${{ matrix.compiler }} ${{ matrix.dflags }}
     runs-on: ${{ matrix.runner }}
     steps:
@@ -28,5 +27,8 @@ jobs:
         run: |
           if [ -n "${{ matrix.dflags }}" ]; then export DFLAGS="-g -O ${{ matrix.dflags }}"; fi
           dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | grep -vE 'Deprecation|which calls|^\s+/' | tail -15
+      - name: Backtrace
+        continue-on-error: true
+        run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" lldb --batch -o run -k "bt 30" -k quit -- ./bin/sideloader --help 2>&1 | grep -vE '^\s+0x' | head -60
       - name: Run
         run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
