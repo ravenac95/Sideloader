@@ -68,6 +68,7 @@ jobs:
           set -e
           tr '\r' '\n' < raw.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > tls-check.log
           grep -E 'server.tls|provision(ed|ing)|logged in|rror' tls-check.log | grep -v 'CALL //' | head -40
+          echo "--- last lines ---"; grep -v 'CALL //' tls-check.log | tail -25
           grep -q 'Verified TLS connection to apps.mzstatic.com' tls-check.log
           grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
           if ! grep -q 'Device provisioned successfully' tls-check.log; then
