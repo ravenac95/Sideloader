@@ -54,6 +54,14 @@ jobs:
           file bin/sideloader
           lipo -archs bin/sideloader | grep -qw "${{ matrix.arch }}"
 
+      - name: Library lookup diagnostics
+        continue-on-error: true
+        run: |
+          ls -la "$(brew --prefix)/lib" | grep -iE 'plist|imobiledevice|usbmuxd|libssl|libcrypto' || true
+          for l in libplist-2.0.4.dylib libplist-2.0.3.dylib libimobiledevice-1.0.6.dylib libusbmuxd-2.0.7.dylib; do
+            DYLD_PRINT_SEARCHING=1 DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" "$(brew --prefix)/bin/python3" -c "import ctypes; ctypes.CDLL('$l'); print('loaded $l')" 2>&1 | tail -3 || true
+          done
+
       - name: Smoke test
         run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
 
