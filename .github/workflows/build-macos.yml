@@ -31,12 +31,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # LDC 1.38 and older build binaries that crash at startup on current macOS
+      # (druntime getTLSRange); 1.42 and newer cannot compile memutils/Botan yet.
       - name: Set-up D compiler
         uses: dlang-community/setup-dlang@v2
         with:
-          compiler: ldc-1.36.0
+          compiler: ldc-1.41.0
 
-      - name: Install runtime libraries (for the smoke test)
+      - name: Install runtime libraries (for the smoke tests)
         run: brew install libimobiledevice libplist openssl@3
 
       - name: Write version file
@@ -54,6 +56,18 @@ jobs:
 
       - name: Smoke test
         run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
+
+      # Anonymous flow, no Apple ID: downloads Apple's libraries and provisions the
+      # machine with Apple over verified TLS, then stops at "not logged in".
+      - name: Verified TLS check (no Apple ID)
+        run: |
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
+          DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader app-id list --debug 2>&1 \
+            | tr '\r' '\n' | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > tls-check.log || true
+          grep -E 'server.tls|provision|logged in|rror' tls-check.log | head -40
+          grep -q 'Verified TLS connection to apps.mzstatic.com' tls-check.log
+          grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
+          grep -q 'Device provisioned successfully' tls-check.log
 
       - name: Package
         run: |

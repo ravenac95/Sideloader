@@ -139,8 +139,11 @@ use of SIMD instructions that cannot be compiled by GDC yet).
 Prebuilt binaries for Apple Silicon and Intel Macs are produced by the "macOS builds"
 GitHub Actions workflow, with a `.sha256` checksum next to each binary. To build it yourself:
 
-1. Install the dependencies with [Homebrew](https://brew.sh):
-   `brew install ldc dub libimobiledevice libplist openssl@3`
+1. Install the libraries with [Homebrew](https://brew.sh):
+   `brew install libimobiledevice libplist openssl@3`
+   and LDC 1.41.0 (older versions build binaries that crash on current macOS, newer ones
+   cannot build the dependencies yet):
+   `curl -fsS https://dlang.org/install.sh | bash -s ldc-1.41.0 && source ~/dlang/ldc-1.41.0/activate`
 2. Clone this repository and enter it:
    `git clone https://github.com/Dadoum/Sideloader && cd Sideloader`
 3. Build the CLI:
