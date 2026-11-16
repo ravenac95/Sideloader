@@ -10,8 +10,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15,       compiler: ldc-1.40.1, dflags: '' }
           - { runner: macos-15,       compiler: ldc-1.41.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.42.0, dflags: '' }
           - { runner: macos-15,       compiler: ldc-latest, dflags: '' }
           - { runner: macos-15-intel, compiler: ldc-1.41.0, dflags: '' }
           - { runner: macos-15-intel, compiler: ldc-latest, dflags: '' }
@@ -27,7 +27,7 @@ jobs:
       - name: Build
         run: |
           if [ "${{ matrix.dflags }}" = target12 ]; then export MACOSX_DEPLOYMENT_TARGET=12.0; fi
-          dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | grep -vE 'Deprecation|which calls|^\s+/' | tail -15
+          dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | grep -vE 'Deprecation|which calls|^\s+/|Building|Up-to-date|Fetching' | tail -40
       - name: Backtrace
         continue-on-error: true
         run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" lldb --batch -o run -k "bt 30" -k quit -- ./bin/sideloader --help 2>&1 | grep -vE '^\s+0x' | head -60
