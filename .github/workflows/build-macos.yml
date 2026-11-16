@@ -10,10 +10,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15,       compiler: ldc-1.36.0, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-1.37.0, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-1.38.0, dflags: '' }
-          - { runner: macos-15-intel, compiler: ldc-1.38.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.39.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.40.0, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.40.1, dflags: '' }
+          - { runner: macos-15-intel, compiler: ldc-1.40.1, dflags: '' }
+          - { runner: macos-15,       compiler: ldc-1.36.0, dflags: 'target12' }
     name: ${{ matrix.runner }} ${{ matrix.compiler }} ${{ matrix.dflags }}
     runs-on: ${{ matrix.runner }}
     steps:
@@ -25,7 +26,7 @@ jobs:
       - run: ldc2 --version > ver.txt; head -1 ver.txt
       - name: Build
         run: |
-          if [ -n "${{ matrix.dflags }}" ]; then export DFLAGS="-g -O ${{ matrix.dflags }}"; fi
+          if [ "${{ matrix.dflags }}" = target12 ]; then export MACOSX_DEPLOYMENT_TARGET=12.0; fi
           dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | grep -vE 'Deprecation|which calls|^\s+/' | tail -15
       - name: Backtrace
         continue-on-error: true
