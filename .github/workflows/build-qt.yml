@@ -90,21 +90,24 @@ jobs:
           otool -L "$app/Contents/MacOS/sideloader" | grep -i qt
           tar -czpf Sideloader-qt.app.tgz -C frontends/common/resources/macos/ Sideloader.app
 
-      # The bundle must start on its own (no Homebrew Qt paths): run it offscreen
-      # for a few seconds and fail if it exits early (a crash or a missing library).
+      # The bundle must start on its own (no Homebrew Qt paths). GitHub's macOS
+      # runners have a window server, so run it normally for a few seconds and
+      # fail if it exits early (a crash or a missing library).
       - name: Smoke test the bundle
         run: |
           app=frontends/common/resources/macos/Sideloader.app
-          export QT_QPA_PLATFORM=offscreen SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
           "$app/Contents/MacOS/sideloader" > smoke.log 2>&1 &
           pid=$!
           sleep 10
           if kill -0 $pid 2>/dev/null; then
             echo "Still running after 10s: OK"; kill $pid
+            head -40 smoke.log
           else
-            wait $pid; echo "Exited early with code $?"; cat smoke.log; exit 1
+            code=0; wait $pid || code=$?
+            echo "Exited early with code $code"; cat smoke.log
+            exit 1
           fi
-          head -20 smoke.log
 
       - uses: actions/upload-artifact@v4
         with:
