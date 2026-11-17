@@ -88,6 +88,14 @@ jobs:
           # Copies the Qt frameworks and plugins into the bundle and rewrites their paths.
           "$QT5_PREFIX/bin/macdeployqt" "$app" -always-overwrite
           otool -L "$app/Contents/MacOS/sideloader" | grep -i qt
+          echo "--- cocoa plugin links ---"
+          otool -L "$app/Contents/PlugIns/platforms/libqcocoa.dylib" | grep -iE 'qt|rpath' || true
+          echo "--- signature before re-signing ---"
+          codesign --verify --deep --strict --verbose=2 "$app" 2>&1 | tail -5 || true
+          # macdeployqt rewrites library paths, which breaks the signatures; Apple
+          # Silicon refuses to load such code, so ad-hoc sign the whole bundle again.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
           tar -czpf Sideloader-qt.app.tgz -C frontends/common/resources/macos/ Sideloader.app
 
       # The bundle must start on its own (no Homebrew Qt paths). GitHub's macOS
@@ -96,7 +104,7 @@ jobs:
       - name: Smoke test the bundle
         run: |
           app=frontends/common/resources/macos/Sideloader.app
-          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config" QT_DEBUG_PLUGINS=1
           "$app/Contents/MacOS/sideloader" > smoke.log 2>&1 &
           pid=$!
           sleep 10
@@ -105,7 +113,7 @@ jobs:
             head -40 smoke.log
           else
             code=0; wait $pid || code=$?
-            echo "Exited early with code $code"; cat smoke.log
+            echo "Exited early with code $code"; grep -vE 'QFactoryLoader::QFactoryLoader\(\) (looking|checking)' smoke.log | tail -60
             exit 1
           fi
 
