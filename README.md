@@ -134,6 +134,26 @@ Get a recent version `ldc2` or `dmd` installed (an installation script is availa
 older compilers. GNU D compiler won't compile that code though (the cryptography library makes 
 use of SIMD instructions that cannot be compiled by GDC yet).
 
+### MacOS
+
+Prebuilt binaries for Apple Silicon and Intel Macs are produced by the "macOS builds"
+GitHub Actions workflow, with a `.sha256` checksum next to each binary. The "Qt builds" workflow
+also produces a `Sideloader.app` bundle for each architecture. Both the CLI and the app load
+libimobiledevice, libplist and OpenSSL at runtime, so they need the Homebrew libraries from step 1
+below (the app only bundles Qt). To build it yourself:
+
+1. Install the libraries with [Homebrew](https://brew.sh):
+   `brew install libimobiledevice libplist openssl@3`
+   and LDC 1.41.0 (older versions build binaries that crash on current macOS, newer ones
+   cannot build the dependencies yet):
+   `curl -fsS https://dlang.org/install.sh | bash -s ldc-1.41.0 && source ~/dlang/ldc-1.41.0/activate`
+2. Clone this repository and enter it:
+   `git clone https://github.com/Dadoum/Sideloader && cd Sideloader`
+3. Build the CLI:
+   `dub build -b release --compiler=ldc2 :cli-frontend`
+4. Run it (Homebrew's libraries are found automatically):
+   `./bin/sideloader --help`
+
 ## How it works?
 
 It works by fetching an iOS development certificate as Xcode would do if you were

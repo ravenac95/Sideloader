@@ -9,9 +9,14 @@ import slf4d;
 
 import requests;
 
+import plist;
+
 import provision;
 
 import constants;
+import libplistloader;
+import server.tls;
+import utils;
 
 struct ProvisioningData {
     Device device;
@@ -22,8 +27,7 @@ bool downloadAndInstallDeps(string configurationPath, bool delegate(float progre
     auto log = getLogger();
 
     log.info("Downloading APK...");
-    Request request = Request();
-    request.sslSetVerifyPeer(false);
+    Request request = secureRequest();
     request.useStreaming = true;
 
     auto response = request.get(nativesUrl);
@@ -68,6 +72,9 @@ bool downloadAndInstallDeps(string configurationPath, bool delegate(float progre
 
 ProvisioningData initializeADI(string configurationPath) {
     auto log = getLogger();
+    if (!ensureLibplistLoaded()) {
+        log.warn("libplist could not be found; install it (on macOS: brew install libplist).");
+    }
     auto device = new Device(configurationPath.buildPath("device.json"));
 
     if (!device.initialized) {
@@ -93,11 +100,108 @@ ProvisioningData initializeADI(string configurationPath) {
     if (!adi.isMachineProvisioned(-2)) {
         log.info("Provisioning device...");
 
-        ProvisioningSession provisioningSession = new ProvisioningSession(adi, device);
-        provisioningSession.provision(-2);
+        provisionDevice(adi, device, -2);
         log.info("Device provisioned successfully.");
     }
     log.debug_("Provisioning OK.");
 
     return ProvisioningData(device, adi);
+}
+
+/++
+ + Registers this machine's anisette identity with Apple.
+ +
+ + This is Provision's `ProvisioningSession.provision`, reimplemented here because
+ + that class always disables certificate verification on its private HTTP client.
+ + Here every request goes through `secureRequest()`, which verifies and pins TLS.
+ +/
+void provisionDevice(ADI adi, Device device, ulong dsId) {
+    import std.base64;
+    import std.datetime.systime;
+    import std.format;
+
+    Request request = secureRequest();
+    request.addHeaders([
+        "User-Agent": "akd/1.0 CFNetwork/1404.0.5 Darwin/22.3.0",
+
+        // they are somehow not using the plist content-type in AuthKit
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Connection": "keep-alive",
+
+        "X-Mme-Device-Id": device.uniqueDeviceIdentifier,
+        "X-MMe-Client-Info": device.serverFriendlyDescription,
+        "X-Apple-I-MD-LU": device.localUserUUID,
+        "X-Apple-Client-App-Name": "Setup",
+    ]);
+
+    string[string] urlBag;
+    {
+        auto lookup = provisioningPlist(request.get("https://gsa.apple.com/grandslam/GsService2/lookup"), "URL bag")["urls"].dict().native();
+        foreach (key, url; lookup) {
+            urlBag[key] = url.str().native();
+        }
+    }
+    string provisioningUrl(string key) {
+        if (auto url = key in urlBag) {
+            return *url;
+        }
+        throw new ProvisioningException(format!"Apple's URL bag has no %s entry."(key));
+    }
+
+    enum plistHeader = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Header</key>
+	<dict/>
+	<key>Request</key>
+`;
+
+    request.addHeaders(["X-Apple-I-Client-Time": Clock.currTime().stripMilliseconds().toISOExtString()]);
+    auto startResponse = provisioningPlist(request.post(
+        provisioningUrl("midStartProvisioning"),
+        plistHeader ~ "\t<dict/>\n</dict>\n</plist>"
+    ), "start provisioning");
+
+    ubyte[] spim = Base64.decode(startResponse["Response"].dict()["spim"].str().native());
+
+    auto cpim = adi.startProvisioning(dsId, spim);
+    scope (failure) try { adi.destroyProvisioning(cpim.session); } catch (Throwable) {}
+
+    request.addHeaders(["X-Apple-I-Client-Time": Clock.currTime().stripMilliseconds().toISOExtString()]);
+    auto endResponse = provisioningPlist(request.post(
+        provisioningUrl("midFinishProvisioning"),
+        plistHeader ~ format!"\t<dict>\n\t\t<key>cpim</key>\n\t\t<string>%s</string>\n\t</dict>\n</dict>\n</plist>"(
+            Base64.encode(cpim.clientProvisioningIntermediateMetadata)
+        )
+    ), "finish provisioning");
+
+    auto response = endResponse["Response"].dict();
+    ubyte[] persistentTokenMetadata = Base64.decode(response["ptm"].str().native());
+    ubyte[] trustKey = Base64.decode(response["tk"].str().native());
+
+    adi.endProvisioning(cpim.session, persistentTokenMetadata, trustKey);
+}
+
+class ProvisioningException: Exception {
+    this(string message, string file = __FILE__, size_t line = __LINE__) {
+        super(message, file, line);
+    }
+}
+
+/// Checks an HTTP response from Apple's provisioning endpoints and parses its plist.
+/// A non-200 answer or a body that isn't a plist dictionary becomes an exception
+/// with a clear message, rather than a null dereference further on.
+private PlistDict provisioningPlist(Response response, string step) {
+    import std.format: format;
+
+    auto body_ = response.responseBody.data!string();
+    if (response.code != 200) {
+        throw new ProvisioningException(format!"Apple answered the %s request with HTTP %d."(step, response.code));
+    }
+    auto parsed = Plist.fromXml(body_);
+    if (parsed is null || parsed.nodeType() != PlistType.PLIST_DICT) {
+        throw new ProvisioningException(format!"Apple's answer to the %s request is not a plist dictionary."(step));
+    }
+    return parsed.dict();
 }

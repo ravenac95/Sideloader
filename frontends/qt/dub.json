@@ -21,7 +21,9 @@
 
     "lflags-osx": [
         "-rpath",
-        "@loader_path/../Frameworks"
+        "@loader_path/../Frameworks",
+        "-F/opt/homebrew/opt/qt@5/lib",
+        "-F/usr/local/opt/qt@5/lib"
     ],
 
     "dependencies": {

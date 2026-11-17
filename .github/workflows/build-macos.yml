@@ -1,0 +1,131 @@
+name: macOS builds
+
+# Native macOS builds of the CLI, on GitHub's own macOS runners (no cross-compilation,
+# no third-party SDK download). Pushing a tag starting with "v" also publishes the
+# binaries and their SHA-256 checksums as a GitHub release.
+
+on:
+  # Pushes to other branches are covered by pull_request, so each PR push runs once
+  # (each run also provisions an anisette machine with Apple).
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel  # Intel
+            arch: x86_64
+
+    name: Build CLI for macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # LDC 1.38 and older build binaries that crash at startup on current macOS
+      # (druntime getTLSRange); 1.42 and newer cannot compile memutils/Botan yet.
+      - name: Set-up D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.41.0
+
+      - name: Install runtime libraries (for the smoke tests)
+        run: brew install libimobiledevice libplist openssl@3
+
+      - name: Write version file
+        uses: ./.github/actions/write-version-file
+        with:
+          version-text: 'Sideloader macOS build, ${{ github.ref_name }}, commit ${{ github.sha }}'
+
+      - name: Build
+        run: dub build -b release-debug --compiler=ldc2 :cli-frontend
+
+      - name: Check architecture
+        run: |
+          file bin/sideloader
+          lipo -archs bin/sideloader | grep -qw "${{ matrix.arch }}"
+
+      - name: Show libplist version
+        run: brew list --versions libplist libimobiledevice libusbmuxd openssl@3
+
+      # No DYLD_* variables: Sideloader must find Homebrew's libraries by itself.
+      - name: Smoke test
+        run: ./bin/sideloader --help
+
+      # Anonymous flow, no Apple ID: downloads Apple's libraries and provisions the
+      # machine with Apple over verified TLS, then stops at "not logged in".
+      - name: Verified TLS check (no Apple ID)
+        run: |
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
+          set +e
+          ./bin/sideloader app-id list --debug > raw.log 2>&1
+          echo "sideloader exit code: $?"
+          set -e
+          tr '\r' '\n' < raw.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > tls-check.log
+          grep -E 'server.tls|provision(ed|ing)|logged in|rror' tls-check.log | grep -v 'CALL //' | head -40
+          echo "--- last lines ---"; grep -v 'CALL //' tls-check.log | tail -25
+          grep -q 'Verified TLS connection to apps.mzstatic.com' tls-check.log
+          grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
+          grep -q 'Device provisioned successfully' tls-check.log
+
+      # Without Homebrew's OpenSSL, the TLS code must fall back to the LibreSSL that
+      # macOS ships (what users of the binaries without openssl@3 will get).
+      - name: Verified TLS check with macOS's LibreSSL
+        run: |
+          brew uninstall --ignore-dependencies openssl@3
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config-libressl"
+          set +e
+          ./bin/sideloader app-id list --debug > raw-libressl.log 2>&1
+          echo "sideloader exit code: $?"
+          set -e
+          tr '\r' '\n' < raw-libressl.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > libressl.log
+          grep -E 'OpenSSL library|server.tls|provision(ed|ing)|logged in|rror' libressl.log | grep -v 'CALL //' | head -20
+          grep -E 'Using OpenSSL library: libssl\.4[0-9]\.dylib' libressl.log
+          grep -q 'Verified TLS connection to apps.mzstatic.com' libressl.log
+          grep -q 'Verified TLS connection to gsa.apple.com' libressl.log
+          grep -q 'Device provisioned successfully' libressl.log
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          name="sideloader-cli-macos-${{ matrix.arch }}"
+          cp bin/sideloader "dist/$name"
+          chmod +x "dist/$name"
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+          cat "dist/$name.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sideloader-cli-macos-${{ matrix.arch }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ github.ref_name }}" -R "${{ github.repository }}" >/dev/null 2>&1 \
+            || gh release create "${{ github.ref_name }}" -R "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "Built by GitHub Actions from commit ${{ github.sha }}."
+          gh release upload "${{ github.ref_name }}" -R "${{ github.repository }}" --clobber dist/*

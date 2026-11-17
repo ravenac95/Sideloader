@@ -22,3 +22,7 @@ docs/
 # Swift
 /swift/.build/
 /swift/Dependencies/SideloaderBackend.xcframework/Headers/sideloader-autogen.h
+
+# Python
+__pycache__/
+*.pyc
