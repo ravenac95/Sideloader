@@ -5,8 +5,10 @@ name: macOS builds
 # binaries and their SHA-256 checksums as a GitHub release.
 
 on:
+  # Pushes to other branches are covered by pull_request, so each PR push runs once
+  # (each run also provisions an anisette machine with Apple).
   push:
-    branches: ['**']
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -76,6 +78,23 @@ jobs:
           grep -q 'Verified TLS connection to apps.mzstatic.com' tls-check.log
           grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
           grep -q 'Device provisioned successfully' tls-check.log
+
+      # Without Homebrew's OpenSSL, the TLS code must fall back to the LibreSSL that
+      # macOS ships (what users of the binaries without openssl@3 will get).
+      - name: Verified TLS check with macOS's LibreSSL
+        run: |
+          brew uninstall --ignore-dependencies openssl@3
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config-libressl"
+          set +e
+          ./bin/sideloader app-id list --debug > raw-libressl.log 2>&1
+          echo "sideloader exit code: $?"
+          set -e
+          tr '\r' '\n' < raw-libressl.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > libressl.log
+          grep -E 'OpenSSL library|server.tls|provision(ed|ing)|logged in|rror' libressl.log | grep -v 'CALL //' | head -20
+          grep -E 'Using OpenSSL library: libssl\.4[0-9]\.dylib' libressl.log
+          grep -q 'Verified TLS connection to apps.mzstatic.com' libressl.log
+          grep -q 'Verified TLS connection to gsa.apple.com' libressl.log
+          grep -q 'Device provisioned successfully' libressl.log
 
       - name: Package
         run: |

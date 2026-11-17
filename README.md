@@ -137,8 +137,10 @@ use of SIMD instructions that cannot be compiled by GDC yet).
 ### MacOS
 
 Prebuilt binaries for Apple Silicon and Intel Macs are produced by the "macOS builds"
-GitHub Actions workflow, with a `.sha256` checksum next to each binary. They need the Homebrew
-libraries from step 1 below. To build it yourself:
+GitHub Actions workflow, with a `.sha256` checksum next to each binary. The "Qt builds" workflow
+also produces a `Sideloader.app` bundle for each architecture. Both the CLI and the app load
+libimobiledevice, libplist and OpenSSL at runtime, so they need the Homebrew libraries from step 1
+below (the app only bundles Qt). To build it yourself:
 
 1. Install the libraries with [Homebrew](https://brew.sh):
    `brew install libimobiledevice libplist openssl@3`

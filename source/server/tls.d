@@ -25,7 +25,6 @@ import std.algorithm.searching;
 import std.conv;
 import std.exception;
 import std.format;
-import std.functional;
 import std.process;
 import std.socket;
 import std.string;
@@ -42,9 +41,13 @@ private static immutable ubyte[] appleRootCA = cast(immutable(ubyte)[]) import("
 private static immutable ubyte[] digiCertGlobalRootG2 = cast(immutable(ubyte)[]) import("DigiCertGlobalRootG2.cer");
 
 /// A `Request` whose HTTPS connections are all verified and pinned.
-Request secureRequest() {
+/// `timeout` applies to connecting and sending, like `Request.timeout` normally does
+/// (requests doesn't pass its own timeout to streams made by a `socketFactory`).
+Request secureRequest(Duration timeout = 30.seconds) {
     Request request = Request();
-    request.socketFactory = toDelegate(&openVerifiedConnection);
+    request.timeout = timeout;
+    request.socketFactory = (string scheme, string host, ushort port) =>
+        openVerifiedConnection(scheme, host, port, timeout);
     return request;
 }
 
@@ -54,12 +57,10 @@ bool isAllowedHost(string host) {
     return host == "apple.com" || host.endsWith(".apple.com") || host.endsWith(".mzstatic.com");
 }
 
-/// The root certificates a host may chain to.
-private immutable(ubyte)[][] trustedRootsFor(string host) {
-    if (host.toLower() == "gsa.apple.com") {
-        return [appleRootCA];
-    }
-    return [appleRootCA, digiCertGlobalRootG2];
+/// gsa.apple.com chains to Apple's private root only; the other Apple hosts
+/// (developer portal, CDN) chain to DigiCert Global Root G2.
+private bool trustsAppleRootOnly(string host) {
+    return host.toLower() == "gsa.apple.com";
 }
 
 class TlsVerificationException: Exception {
@@ -68,7 +69,7 @@ class TlsVerificationException: Exception {
     }
 }
 
-NetworkStream openVerifiedConnection(string scheme, string host, ushort port) {
+NetworkStream openVerifiedConnection(string scheme, string host, ushort port, Duration timeout = 30.seconds) {
     if (scheme != "https") {
         throw new TlsVerificationException(format!"Refusing to connect to %s://%s: only HTTPS is allowed."(scheme, host));
     }
@@ -77,7 +78,7 @@ NetworkStream openVerifiedConnection(string scheme, string host, ushort port) {
     }
 
     auto stream = new VerifiedTlsStream();
-    stream.connect(host, port);
+    stream.connect(host, port, timeout);
     return stream;
 }
 
@@ -113,8 +114,10 @@ private bool bypassesProxy(string host) {
 final class VerifiedTlsStream: NetworkStream {
     private Socket socket;
     private SSL* ssl;
-    private SSL_CTX* ctx;
+    private SSL_CTX* ownedCtx; // only for tests that override the roots
     private bool connected;
+    // Set after a fatal TLS or socket error: SSL_shutdown must not be called then.
+    private bool fatal;
     private immutable(ubyte)[][] rootsOverride;
 
     this() {}
@@ -128,7 +131,7 @@ final class VerifiedTlsStream: NetworkStream {
     @property bool isOpen() const { return socket !is null; }
     Socket so() { return socket; }
 
-    NetworkStream connect(string host, ushort port, Duration timeout = 10.seconds) {
+    NetworkStream connect(string host, ushort port, Duration timeout = 30.seconds) {
         auto log = getLogger();
         scope(failure) close();
 
@@ -161,6 +164,11 @@ final class VerifiedTlsStream: NetworkStream {
                 candidate.setOption(SocketOptionLevel.SOCKET, SocketOption.SNDTIMEO, timeout);
                 candidate.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, timeout);
                 candidate.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+                version (OSX) {
+                    // Writing to a reset connection must fail, not kill the process.
+                    enum SO_NOSIGPIPE = 0x1022;
+                    candidate.setOption(SocketOptionLevel.SOCKET, cast(SocketOption) SO_NOSIGPIPE, 1);
+                }
                 candidate.connect(address);
                 socket = candidate;
                 return;
@@ -212,25 +220,12 @@ final class VerifiedTlsStream: NetworkStream {
     private void handshake(string host) {
         auto lib = OpenSSLLib.get();
 
-        ctx = lib.SSL_CTX_new(lib.TLS_client_method());
-        enforce!TlsVerificationException(ctx, "Cannot create a TLS context: " ~ lib.lastError());
-
-        // TLS 1.2 minimum.
-        enforce!TlsVerificationException(
-            lib.SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, null) == 1,
-            "Cannot require TLS 1.2: " ~ lib.lastError()
-        );
-
-        // Trust only the pinned roots: the system trust store is never loaded.
-        auto store = lib.SSL_CTX_get_cert_store(ctx);
-        foreach (der; rootsOverride.length ? rootsOverride : trustedRootsFor(host)) {
-            const(ubyte)* p = der.ptr;
-            auto cert = lib.d2i_X509(null, &p, cast(c_long) der.length);
-            enforce!TlsVerificationException(cert, "Cannot parse a pinned root certificate: " ~ lib.lastError());
-            scope(exit) lib.X509_free(cert);
-            enforce!TlsVerificationException(lib.X509_STORE_add_cert(store, cert) == 1, "Cannot load a pinned root certificate: " ~ lib.lastError());
+        SSL_CTX* ctx;
+        if (rootsOverride.length) {
+            ctx = ownedCtx = lib.buildContext(rootsOverride);
+        } else {
+            ctx = trustsAppleRootOnly(host) ? lib.appleRootContext : lib.appleHostsContext;
         }
-        lib.SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, null);
 
         ssl = lib.SSL_new(ctx);
         enforce!TlsVerificationException(ssl, "Cannot create a TLS session: " ~ lib.lastError());
@@ -275,6 +270,7 @@ final class VerifiedTlsStream: NetworkStream {
             }
             auto err = lib.SSL_get_error(ssl, written);
             if (err == SSL_ERROR_SYSCALL && e == core.stdc.errno.EINTR) continue;
+            fatal = true;
             close();
             throw new NetworkException("Sending data failed: " ~ lib.lastError());
         }
@@ -292,11 +288,20 @@ final class VerifiedTlsStream: NetworkStream {
                 return read;
             }
             auto err = lib.SSL_get_error(ssl, read);
-            if (err == SSL_ERROR_ZERO_RETURN || (err == SSL_ERROR_SYSCALL && read == 0 && e == 0)) {
-                // Connection closed.
+            if (err == SSL_ERROR_ZERO_RETURN) {
+                // Clean close (close_notify received).
+                return 0;
+            }
+            if (err == SSL_ERROR_SYSCALL && read == 0 && e == 0) {
+                // EOF without close_notify (OpenSSL 1.1 / LibreSSL; OpenSSL 3 reports it
+                // as SSL_ERROR_SSL). A body delimited by Content-Length or chunked
+                // encoding is still checked by requests; anything else may be truncated.
+                getLogger().warn("TLS connection closed without close_notify; the response may be truncated.");
+                fatal = true;
                 return 0;
             }
             if (err == SSL_ERROR_SYSCALL && e == core.stdc.errno.EINTR) continue;
+            fatal = true;
             close();
             if (err == SSL_ERROR_WANT_READ || (err == SSL_ERROR_SYSCALL && (e == core.stdc.errno.EAGAIN || e == core.stdc.errno.EWOULDBLOCK))) {
                 throw new TimeoutException("Timeout receiving data");
@@ -306,16 +311,21 @@ final class VerifiedTlsStream: NetworkStream {
     }
 
     void close() @trusted {
+        auto wasConnected = connected;
         connected = false;
         if (ssl !is null) {
             auto lib = OpenSSLLib.get();
-            lib.SSL_shutdown(ssl);
+            // Never send close_notify after a fatal error (OpenSSL forbids it) or
+            // on a connection whose handshake didn't complete.
+            if (wasConnected && !fatal) {
+                lib.SSL_shutdown(ssl);
+            }
             lib.SSL_free(ssl);
             ssl = null;
         }
-        if (ctx !is null) {
-            OpenSSLLib.get().SSL_CTX_free(ctx);
-            ctx = null;
+        if (ownedCtx !is null) {
+            OpenSSLLib.get().SSL_CTX_free(ownedCtx);
+            ownedCtx = null;
         }
         if (socket !is null) {
             socket.close();
@@ -384,17 +394,43 @@ private final class OpenSSLLib {
         void function(c_ulong, char*, size_t) ERR_error_string_n;
     }
 
+    /// Shared, read-only after construction: one context per pinned root set.
+    /// SSL_CTX is safe to use from several threads for SSL_new.
+    SSL_CTX* appleRootContext;
+    SSL_CTX* appleHostsContext;
+
     private __gshared OpenSSLLib instance;
 
+    /// Thread-safe: initOnce publishes the fully constructed instance (and its
+    /// function pointers) to every thread, which a plain double-checked lock on
+    /// arm64's weak memory model would not guarantee.
     static OpenSSLLib get() {
-        if (instance is null) {
-            synchronized {
-                if (instance is null) {
-                    instance = new OpenSSLLib();
-                }
-            }
+        import std.concurrency: initOnce;
+        return initOnce!instance(new OpenSSLLib());
+    }
+
+    /// A client context that requires TLS 1.2+, verifies the peer, and trusts only
+    /// `roots` (DER). The system trust store is never loaded.
+    SSL_CTX* buildContext(const(immutable(ubyte)[])[] roots) {
+        auto ctx = SSL_CTX_new(TLS_client_method());
+        enforce!TlsVerificationException(ctx, "Cannot create a TLS context: " ~ lastError());
+        scope(failure) SSL_CTX_free(ctx);
+
+        enforce!TlsVerificationException(
+            SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, null) == 1,
+            "Cannot require TLS 1.2: " ~ lastError()
+        );
+
+        auto store = SSL_CTX_get_cert_store(ctx);
+        foreach (der; roots) {
+            const(ubyte)* p = der.ptr;
+            auto cert = d2i_X509(null, &p, cast(c_long) der.length);
+            enforce!TlsVerificationException(cert, "Cannot parse a pinned root certificate: " ~ lastError());
+            scope(exit) X509_free(cert);
+            enforce!TlsVerificationException(X509_STORE_add_cert(store, cert) == 1, "Cannot load a pinned root certificate: " ~ lastError());
         }
-        return instance;
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, null);
+        return ctx;
     }
 
     string lastError() nothrow {
@@ -440,16 +476,18 @@ private final class OpenSSLLib {
         }
 
         void* ssl, crypto;
+        string chosen;
         foreach (candidate; candidates) {
             ssl = openLibrary(candidate[0]);
             if (!ssl) continue;
             crypto = openLibrary(candidate[1]);
-            if (crypto) break;
+            if (crypto) { chosen = candidate[0]; break; }
             ssl = null;
         }
         if (!ssl || !crypto) {
             throw new TlsVerificationException("OpenSSL (1.1 or newer) could not be found. It is needed for secure connections.");
         }
+        getLogger().debugF!"Using OpenSSL library: %s"(chosen);
 
         static foreach (member; [
             "TLS_client_method", "SSL_CTX_new", "SSL_CTX_free", "SSL_CTX_ctrl", "SSL_CTX_get_cert_store",
@@ -463,6 +501,22 @@ private final class OpenSSLLib {
             "ERR_get_error", "ERR_error_string_n",
         ]) {
             mixin(member) = cast(typeof(mixin(member))) loadSymbol(crypto, member);
+        }
+
+        appleRootContext = buildContext([appleRootCA]);
+        appleHostsContext = buildContext([appleRootCA, digiCertGlobalRootG2]);
+
+        version (Posix) {
+            // On Linux, OpenSSL writes with write(), not send(MSG_NOSIGNAL), so a
+            // reset connection would raise SIGPIPE and kill the process. Ignore it,
+            // unless the application already installed its own handler.
+            import core.sys.posix.signal: sigaction, sigaction_t, SIGPIPE, SIG_DFL, SIG_IGN;
+            sigaction_t current;
+            if (sigaction(SIGPIPE, null, &current) == 0 && current.sa_handler == SIG_DFL) {
+                sigaction_t ignore;
+                ignore.sa_handler = SIG_IGN;
+                sigaction(SIGPIPE, &ignore, null);
+            }
         }
     }
 

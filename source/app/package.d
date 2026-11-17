@@ -136,10 +136,16 @@ void provisionDevice(ADI adi, Device device, ulong dsId) {
 
     string[string] urlBag;
     {
-        auto lookup = Plist.fromXml(request.get("https://gsa.apple.com/grandslam/GsService2/lookup").responseBody.data!string())["urls"].dict().native();
+        auto lookup = provisioningPlist(request.get("https://gsa.apple.com/grandslam/GsService2/lookup"), "URL bag")["urls"].dict().native();
         foreach (key, url; lookup) {
             urlBag[key] = url.str().native();
         }
+    }
+    string provisioningUrl(string key) {
+        if (auto url = key in urlBag) {
+            return *url;
+        }
+        throw new ProvisioningException(format!"Apple's URL bag has no %s entry."(key));
     }
 
     enum plistHeader = `<?xml version="1.0" encoding="UTF-8"?>
@@ -152,27 +158,50 @@ void provisionDevice(ADI adi, Device device, ulong dsId) {
 `;
 
     request.addHeaders(["X-Apple-I-Client-Time": Clock.currTime().stripMilliseconds().toISOExtString()]);
-    string startProvisioningPlist = request.post(
-        urlBag["midStartProvisioning"],
+    auto startResponse = provisioningPlist(request.post(
+        provisioningUrl("midStartProvisioning"),
         plistHeader ~ "\t<dict/>\n</dict>\n</plist>"
-    ).responseBody.data!string();
+    ), "start provisioning");
 
-    ubyte[] spim = Base64.decode(Plist.fromXml(startProvisioningPlist)["Response"].dict()["spim"].str().native());
+    ubyte[] spim = Base64.decode(startResponse["Response"].dict()["spim"].str().native());
 
     auto cpim = adi.startProvisioning(dsId, spim);
     scope (failure) try { adi.destroyProvisioning(cpim.session); } catch (Throwable) {}
 
     request.addHeaders(["X-Apple-I-Client-Time": Clock.currTime().stripMilliseconds().toISOExtString()]);
-    string endProvisioningPlist = request.post(
-        urlBag["midFinishProvisioning"],
+    auto endResponse = provisioningPlist(request.post(
+        provisioningUrl("midFinishProvisioning"),
         plistHeader ~ format!"\t<dict>\n\t\t<key>cpim</key>\n\t\t<string>%s</string>\n\t</dict>\n</dict>\n</plist>"(
             Base64.encode(cpim.clientProvisioningIntermediateMetadata)
         )
-    ).responseBody.data!string();
+    ), "finish provisioning");
 
-    auto response = Plist.fromXml(endProvisioningPlist)["Response"].dict();
+    auto response = endResponse["Response"].dict();
     ubyte[] persistentTokenMetadata = Base64.decode(response["ptm"].str().native());
     ubyte[] trustKey = Base64.decode(response["tk"].str().native());
 
     adi.endProvisioning(cpim.session, persistentTokenMetadata, trustKey);
+}
+
+class ProvisioningException: Exception {
+    this(string message, string file = __FILE__, size_t line = __LINE__) {
+        super(message, file, line);
+    }
+}
+
+/// Checks an HTTP response from Apple's provisioning endpoints and parses its plist.
+/// A non-200 answer or a body that isn't a plist dictionary becomes an exception
+/// with a clear message, rather than a null dereference further on.
+private PlistDict provisioningPlist(Response response, string step) {
+    import std.format: format;
+
+    auto body_ = response.responseBody.data!string();
+    if (response.code != 200) {
+        throw new ProvisioningException(format!"Apple answered the %s request with HTTP %d."(step, response.code));
+    }
+    auto parsed = Plist.fromXml(body_);
+    if (parsed is null || parsed.nodeType() != PlistType.PLIST_DICT) {
+        throw new ProvisioningException(format!"Apple's answer to the %s request is not a plist dictionary."(step));
+    }
+    return parsed.dict();
 }
