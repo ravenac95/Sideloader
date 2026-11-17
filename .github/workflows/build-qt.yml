@@ -87,13 +87,12 @@ jobs:
           cp bin/sideloader "$app/Contents/MacOS/"
           # Copies the Qt frameworks and plugins into the bundle and rewrites their paths.
           "$QT5_PREFIX/bin/macdeployqt" "$app" -always-overwrite
-          otool -L "$app/Contents/MacOS/sideloader" | grep -i qt
-          echo "--- cocoa plugin links ---"
-          otool -L "$app/Contents/PlugIns/platforms/libqcocoa.dylib" | grep -iE 'qt|rpath' || true
-          echo "--- signature before re-signing ---"
-          codesign --verify --deep --strict --verbose=2 "$app" 2>&1 | tail -5 || true
-          # macdeployqt rewrites library paths, which breaks the signatures; Apple
-          # Silicon refuses to load such code, so ad-hoc sign the whole bundle again.
+          # macdeployqt leaves some Homebrew dependencies' own references pointing
+          # outside the bundle (e.g. libbrotlidec -> @loader_path/../lib/libbrotlicommon).
+          python3 .github/scripts/fix-macos-bundle.py "$app" "$(brew --prefix)"
+          otool -L "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
+          # Rewriting library paths invalidates code signatures, which Apple Silicon
+          # enforces, so ad-hoc sign the whole bundle again.
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
           tar -czpf Sideloader-qt.app.tgz -C frontends/common/resources/macos/ Sideloader.app
