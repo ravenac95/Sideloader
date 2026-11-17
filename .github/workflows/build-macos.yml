@@ -1,7 +1,7 @@
 name: macOS builds
 
-# Temporary (scratch branch): do the cross-compiled macOS CLI binaries from
-# "CLI builds" run 44057405566 actually start on macOS?
+# Temporary (scratch branch): do the cross-compiled macOS binaries from
+# CLI run 44059239483 and DlangUI run 44059239560 (LDC 1.41.0) start on macOS?
 on:
   push:
     branches: ['ci-debug-macos']
@@ -16,21 +16,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15,       artifact: sideloader-cli-arm64-apple-macos }
-          - { runner: macos-15-intel, artifact: sideloader-cli-x86_64-apple-darwin }
+          - { runner: macos-15,       run: 44059239483, artifact: sideloader-cli-arm64-apple-macos,   gui: false }
+          - { runner: macos-15-intel, run: 44059239483, artifact: sideloader-cli-x86_64-apple-darwin, gui: false }
+          - { runner: macos-15,       run: 44059239560, artifact: sideloader-dlangui-arm64-apple-macos,   gui: true }
+          - { runner: macos-15-intel, run: 44059239560, artifact: sideloader-dlangui-x86_64-apple-darwin, gui: true }
     name: ${{ matrix.artifact }} on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          run-id: 44057405566
+          run-id: ${{ matrix.run }}
           github-token: ${{ github.token }}
           path: bin
       - run: brew install libimobiledevice libplist openssl@3
       - run: ls -la bin; file bin/*
-      - name: Run --help
+      - name: Run
         run: |
           f=$(ls bin/sideloader-* | grep -v '\.dbg$' | head -1); chmod +x "$f"
-          set +e; "$f" --help; code=$?; echo "exit code: $code"
-          [ $code -eq 0 ]
+          export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/cfg"
+          if [ "${{ matrix.gui }}" = true ]; then
+            "$f" > run.log 2>&1 & pid=$!; sleep 10
+            if kill -0 $pid 2>/dev/null; then echo "Still running after 10s: OK"; kill $pid; head -20 run.log
+            else code=0; wait $pid || code=$?; echo "exit code: $code"; cat run.log; exit 1; fi
+          else
+            set +e; "$f" --help; code=$?; echo "exit code: $code"; [ $code -eq 0 ]
+          fi
