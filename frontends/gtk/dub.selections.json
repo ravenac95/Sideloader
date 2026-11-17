@@ -9,7 +9,7 @@
 		"gtk_d": "1.0.3",
 		"intel-intrinsics": "1.11.25",
 		"memutils": "1.0.11",
-		"plist-d": {"path":"../../vendor/libplist-d"},
+		"plist-d": {"version":"6fdaa60d62bbf7c55044069e8f03cbe74401c444","repository":"git+https://github.com/Dadoum/libplist-d.git"},
 		"provision": {"version":"7717ce1f7b3c9779fe9982005d07b6665071a239","repository":"git+https://github.com/Dadoum/Provision.git"},
 		"requests": "2.1.2",
 		"slf4d": "2.4.3",

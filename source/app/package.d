@@ -14,6 +14,7 @@ import plist;
 import provision;
 
 import constants;
+import libplistloader;
 import server.tls;
 import utils;
 
@@ -71,6 +72,9 @@ bool downloadAndInstallDeps(string configurationPath, bool delegate(float progre
 
 ProvisioningData initializeADI(string configurationPath) {
     auto log = getLogger();
+    if (!ensureLibplistLoaded()) {
+        log.warn("libplist could not be found; install it (on macOS: brew install libplist).");
+    }
     auto device = new Device(configurationPath.buildPath("device.json"));
 
     if (!device.initialized) {
