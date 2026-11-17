@@ -9,9 +9,9 @@ version (Windows) {
         enum libimobiledevice = LibImport("imobiledevice.dll");
     }
 } else version (OSX) {
-    // Bare names first (honours DYLD_* paths), then Homebrew's prefixes, which dlopen
-    // does not search by default (/opt/homebrew on Apple Silicon, /usr/local on Intel).
-    enum libimobiledevice = LibImport("libimobiledevice-1.0.6.dylib", "/opt/homebrew/lib/libimobiledevice-1.0.6.dylib", "/usr/local/lib/libimobiledevice-1.0.6.dylib");
+    // The copy bundled next to the executable (lib/) first, then bare names (honours
+    // DYLD_* paths), then Homebrew's prefixes, which dlopen does not search by default.
+    enum libimobiledevice = LibImport("@executable_path/lib/libimobiledevice-1.0.6.dylib", "libimobiledevice-1.0.6.dylib", "/opt/homebrew/lib/libimobiledevice-1.0.6.dylib", "/usr/local/lib/libimobiledevice-1.0.6.dylib");
 } else {
     enum libimobiledevice = LibImport("libimobiledevice-1.0.so.6", "libimobiledevice.so.1");
 }

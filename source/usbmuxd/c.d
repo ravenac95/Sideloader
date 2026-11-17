@@ -30,9 +30,9 @@ version (Windows) {
         enum libusbmuxd = LibImport("usbmuxd.dll");
     }
 } else version (OSX) {
-    // Bare names first (honours DYLD_* paths), then Homebrew's prefixes, which dlopen
-    // does not search by default (/opt/homebrew on Apple Silicon, /usr/local on Intel).
-    enum libusbmuxd = LibImport("libusbmuxd-2.0.7.dylib", "libusbmuxd-2.0.6.dylib", "/opt/homebrew/lib/libusbmuxd-2.0.7.dylib", "/opt/homebrew/lib/libusbmuxd-2.0.6.dylib", "/usr/local/lib/libusbmuxd-2.0.7.dylib", "/usr/local/lib/libusbmuxd-2.0.6.dylib");
+    // The copy bundled next to the executable (lib/) first, then bare names (honours
+    // DYLD_* paths), then Homebrew's prefixes, which dlopen does not search by default.
+    enum libusbmuxd = LibImport("@executable_path/lib/libusbmuxd-2.0.7.dylib", "libusbmuxd-2.0.7.dylib", "libusbmuxd-2.0.6.dylib", "/opt/homebrew/lib/libusbmuxd-2.0.7.dylib", "/opt/homebrew/lib/libusbmuxd-2.0.6.dylib", "/usr/local/lib/libusbmuxd-2.0.7.dylib", "/usr/local/lib/libusbmuxd-2.0.6.dylib");
 } else {
     enum libusbmuxd = LibImport("libusbmuxd-2.0.so.7", "libusbmuxd-2.0.so.6", "libusbmuxd.so.2", "libusbmuxd-2.0.so");
 }

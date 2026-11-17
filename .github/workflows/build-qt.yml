@@ -90,6 +90,10 @@ jobs:
           # macdeployqt leaves some Homebrew dependencies' own references pointing
           # outside the bundle (e.g. libbrotlidec -> @loader_path/../lib/libbrotlicommon).
           python3 .github/scripts/fix-macos-bundle.py "$app" "$(brew --prefix)"
+          # Bundle the libraries Sideloader dlopens (it looks in @executable_path/lib first).
+          python3 .github/scripts/bundle-macos-libs.py "$app/Contents/MacOS/lib" "$(brew --prefix)" \
+            libimobiledevice-1.0.6.dylib libusbmuxd-2.0.7.dylib 'libplist-2.0.[0-9]*.dylib' \
+            libssl.3.dylib libcrypto.3.dylib
           otool -L "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
           # Rewriting library paths invalidates code signatures, which Apple Silicon
           # enforces, so ad-hoc sign the whole bundle again.
@@ -97,14 +101,14 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           tar -czpf Sideloader-qt.app.tgz -C frontends/common/resources/macos/ Sideloader.app
 
-      # The bundle must start on its own (Homebrew's Qt is removed first). GitHub's macOS
+      # The bundle must start on its own (Homebrew's copies are removed first). GitHub's macOS
       # runners have a window server, so run it normally for a few seconds and
       # fail if it exits early (a crash or a missing library).
       - name: Smoke test the bundle
         run: |
-          # Remove Homebrew's Qt so a reference fix-macos-bundle.py missed can't
-          # resolve to it: the bundle has to stand on its own.
-          brew uninstall --ignore-dependencies qt@5
+          # Remove Homebrew's Qt and the bundled libraries, so a reference the bundling
+          # scripts missed can't resolve to Homebrew: the app has to stand on its own.
+          brew uninstall --ignore-dependencies qt@5 libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 || true
           app=frontends/common/resources/macos/Sideloader.app
           export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config" QT_DEBUG_PLUGINS=1
           "$app/Contents/MacOS/sideloader" > smoke.log 2>&1 &
