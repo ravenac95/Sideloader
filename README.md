@@ -137,9 +137,8 @@ use of SIMD instructions that cannot be compiled by GDC yet).
 ### MacOS
 
 Prebuilt binaries for Apple Silicon and Intel Macs are produced by the "macOS builds"
-GitHub Actions workflow, with a `.sha256` checksum next to each binary. Known issue on Apple
-Silicon: current Homebrew ships libplist 2.8 (`libplist-2.0.12.dylib`), which the libplist-d
-binding does not look for yet, so Sideloader fails at its first plist operation. To build it yourself:
+GitHub Actions workflow, with a `.sha256` checksum next to each binary. They need the Homebrew
+libraries from step 1 below. To build it yourself:
 
 1. Install the libraries with [Homebrew](https://brew.sh):
    `brew install libimobiledevice libplist openssl@3`
@@ -150,8 +149,8 @@ binding does not look for yet, so Sideloader fails at its first plist operation.
    `git clone https://github.com/Dadoum/Sideloader && cd Sideloader`
 3. Build the CLI:
    `dub build -b release --compiler=ldc2 :cli-frontend`
-4. Run it, telling macOS where Homebrew's libraries are:
-   `DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help`
+4. Run it (Homebrew's libraries are found automatically):
+   `./bin/sideloader --help`
 
 ## How it works?
 

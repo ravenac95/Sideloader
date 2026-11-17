@@ -30,7 +30,7 @@
 		"memutils": "1.0.10",
 		"mir-core": "1.6.0",
 		"plist": "~master",
-		"plist-d": {"version":"6fdaa60d62bbf7c55044069e8f03cbe74401c444","repository":"git+https://github.com/Dadoum/libplist-d.git"},
+		"plist-d": {"path":"../../vendor/libplist-d"},
 		"progress": "5.0.2",
 		"provision": {"version":"7717ce1f7b3c9779fe9982005d07b6665071a239","repository":"git+https://github.com/Dadoum/Provision.git"},
 		"requests": "2.2.0",

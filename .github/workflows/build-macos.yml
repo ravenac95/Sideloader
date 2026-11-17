@@ -54,8 +54,12 @@ jobs:
           file bin/sideloader
           lipo -archs bin/sideloader | grep -qw "${{ matrix.arch }}"
 
+      - name: Show libplist version
+        run: brew list --versions libplist libimobiledevice libusbmuxd openssl@3
+
+      # No DYLD_* variables: Sideloader must find Homebrew's libraries by itself.
       - name: Smoke test
-        run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
+        run: ./bin/sideloader --help
 
       # Anonymous flow, no Apple ID: downloads Apple's libraries and provisions the
       # machine with Apple over verified TLS, then stops at "not logged in".
@@ -63,7 +67,7 @@ jobs:
         run: |
           export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
           set +e
-          DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader app-id list --debug > raw.log 2>&1
+          ./bin/sideloader app-id list --debug > raw.log 2>&1
           echo "sideloader exit code: $?"
           set -e
           tr '\r' '\n' < raw.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > tls-check.log
@@ -71,15 +75,7 @@ jobs:
           echo "--- last lines ---"; grep -v 'CALL //' tls-check.log | tail -25
           grep -q 'Verified TLS connection to apps.mzstatic.com' tls-check.log
           grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
-          if ! grep -q 'Device provisioned successfully' tls-check.log; then
-            if [ "${{ matrix.arch }}" = arm64 ]; then
-              # Known: Homebrew's arm64 libplist 2.8 ships libplist-2.0.12.dylib, but the
-              # libplist-d binding only looks for libplist-2.0.3/2.0.4.dylib.
-              echo "::warning::Provisioning did not complete on arm64: libplist-d cannot find Homebrew's libplist 2.8 (libplist-2.0.12.dylib)."
-            else
-              exit 1
-            fi
-          fi
+          grep -q 'Device provisioned successfully' tls-check.log
 
       - name: Package
         run: |
