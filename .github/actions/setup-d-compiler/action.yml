@@ -9,9 +9,17 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: dlang-community/setup-dlang@v1
+    # macOS binaries built with LDC 1.38 or older crash at startup on current macOS
+    # (druntime getTLSRange), so Apple targets use LDC 1.41.0. Other targets keep 1.34.0.
+    - if: ${{ !contains(inputs.target-triple, 'apple') }}
+      uses: dlang-community/setup-dlang@v1
       with:
         compiler: ldc-1.34.0
+
+    - if: ${{ contains(inputs.target-triple, 'apple') }}
+      uses: dlang-community/setup-dlang@v1
+      with:
+        compiler: ldc-1.41.0
 
     - if: inputs.target-triple == 'aarch64-linux-gnu'
       name: "Set-up AArch64-linux cross-compiler."
