@@ -45,7 +45,7 @@ jobs:
       - name: Install libraries to bundle
         run: |
           brew install libimobiledevice libplist openssl@3
-          brew list --versions libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 || true
+          brew list --versions libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 openssl@4 || true
 
       - name: Write version file
         uses: ./.github/actions/write-version-file
@@ -80,8 +80,8 @@ jobs:
       # fresh folder, with the Homebrew copies of its libraries uninstalled.
       - name: Remove Homebrew's copies of the bundled libraries
         run: |
-          brew uninstall --ignore-dependencies libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 || true
-          if ls "$(brew --prefix)"/lib | grep -E '^lib(imobiledevice|usbmuxd|plist|tatsu)|^lib(ssl|crypto)\.3'; then
+          brew uninstall --ignore-dependencies libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 openssl@4 || true
+          if ls "$(brew --prefix)"/lib | grep -E '^lib(imobiledevice|usbmuxd|plist|tatsu)|^lib(ssl|crypto)\.[34]'; then
             echo "Homebrew copies are still installed"; exit 1
           fi
           echo "No Homebrew copies left."

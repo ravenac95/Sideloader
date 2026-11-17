@@ -108,7 +108,7 @@ jobs:
         run: |
           # Remove Homebrew's Qt and the bundled libraries, so a reference the bundling
           # scripts missed can't resolve to Homebrew: the app has to stand on its own.
-          brew uninstall --ignore-dependencies qt@5 libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 || true
+          brew uninstall --ignore-dependencies qt@5 libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 openssl@4 || true
           app=frontends/common/resources/macos/Sideloader.app
           export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config" QT_DEBUG_PLUGINS=1
           "$app/Contents/MacOS/sideloader" > smoke.log 2>&1 &
