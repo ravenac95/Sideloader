@@ -1,35 +1,36 @@
 name: macOS builds
 
+# Temporary (scratch branch): do the cross-compiled macOS CLI binaries from
+# "CLI builds" run 44057405566 actually start on macOS?
 on:
   push:
     branches: ['ci-debug-macos']
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
-  experiment:
+  run-cross-built:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15,       compiler: ldc-1.41.0, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-1.42.0, dflags: '' }
-          - { runner: macos-15,       compiler: ldc-latest, dflags: '' }
-          - { runner: macos-15-intel, compiler: ldc-1.41.0, dflags: '' }
-          - { runner: macos-15-intel, compiler: ldc-latest, dflags: '' }
-    name: ${{ matrix.runner }} ${{ matrix.compiler }} ${{ matrix.dflags }}
+          - { runner: macos-15,       artifact: sideloader-cli-arm64-apple-macos }
+          - { runner: macos-15-intel, artifact: sideloader-cli-x86_64-apple-darwin }
+    name: ${{ matrix.artifact }} on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dlang-community/setup-dlang@v2
+      - uses: actions/download-artifact@v4
         with:
-          compiler: ${{ matrix.compiler }}
+          name: ${{ matrix.artifact }}
+          run-id: 44057405566
+          github-token: ${{ github.token }}
+          path: bin
       - run: brew install libimobiledevice libplist openssl@3
-      - run: ldc2 --version > ver.txt; head -1 ver.txt
-      - name: Build
+      - run: ls -la bin; file bin/*
+      - name: Run --help
         run: |
-          if [ "${{ matrix.dflags }}" = target12 ]; then export MACOSX_DEPLOYMENT_TARGET=12.0; fi
-          dub build -b release-debug --compiler=ldc2 :cli-frontend 2>&1 | grep -vE 'Deprecation|which calls|^\s+/|Building|Up-to-date|Fetching' | tail -40
-      - name: Backtrace
-        continue-on-error: true
-        run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" lldb --batch -o run -k "bt 30" -k quit -- ./bin/sideloader --help 2>&1 | grep -vE '^\s+0x' | head -60
-      - name: Run
-        run: DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib" ./bin/sideloader --help
+          f=$(ls bin/sideloader-* | grep -v '\.dbg$' | head -1); chmod +x "$f"
+          set +e; "$f" --help; code=$?; echo "exit code: $code"
+          [ $code -eq 0 ]
