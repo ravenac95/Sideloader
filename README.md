@@ -136,21 +136,24 @@ use of SIMD instructions that cannot be compiled by GDC yet).
 
 ### MacOS
 
-The "macOS builds" GitHub Actions workflow produces `sideloader-macos-arm64.tar.gz` (Apple
-Silicon) and `sideloader-macos-x86_64.tar.gz` (Intel), each with a `.sha256` checksum. Each
-contains `sideloader` and a `lib/` folder with every library it loads (libimobiledevice,
-libusbmuxd, libplist, OpenSSL), so **nothing needs to be installed**:
+Prebuilt binaries for Apple Silicon and Intel Macs are produced by the "macOS builds"
+GitHub Actions workflow, with a `.sha256` checksum next to each binary. The "Qt builds" workflow
+also produces a `Sideloader.app` bundle for each architecture. Both the CLI and the app load
+libimobiledevice, libplist and OpenSSL at runtime, so they need the Homebrew libraries from step 1
+below (the app only bundles Qt).
+
+Download the `sideloader-cli-macos-arm64` (Apple Silicon) or `sideloader-cli-macos-x86_64` (Intel)
+artifact from a "macOS builds" run (GitHub serves it as a zip), then:
 
 ```sh
-tar -xzf sideloader-macos-arm64.tar.gz
-cd sideloader-macos-arm64
-xattr -dr com.apple.quarantine .   # the build is not notarized
-./sideloader --help
+brew install libimobiledevice libplist
+xattr -d com.apple.quarantine sideloader-cli-macos-arm64   # the build is not notarized
+chmod +x sideloader-cli-macos-arm64
+./sideloader-cli-macos-arm64 --help
 ```
 
-Keep `lib/` next to `sideloader`. Use these rather than the macOS files from the "CLI builds"
-workflow, which are cross-compiled from Linux. The "Qt builds" workflow also produces a
-self-contained `Sideloader.app` (Qt and the same libraries are inside the bundle).
+Don't use the macOS files from the "CLI builds" workflow: they are cross-compiled from Linux with
+a linker that doesn't set `SG_READ_ONLY` on `__DATA_CONST`, and current macOS refuses to run them.
 
 To build it yourself:
 

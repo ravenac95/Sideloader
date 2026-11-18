@@ -1,9 +1,8 @@
 name: macOS builds
 
 # Native macOS builds of the CLI, on GitHub's own macOS runners (no cross-compilation,
-# no third-party SDK download), packaged with every library they load so they run
-# without Homebrew. Pushing a tag starting with "v" also publishes the packages and
-# their SHA-256 checksums as a GitHub release.
+# no third-party SDK download). Pushing a tag starting with "v" also publishes the
+# binaries and their SHA-256 checksums as a GitHub release.
 
 on:
   # Pushes to other branches are covered by pull_request, so each PR push runs once
@@ -41,11 +40,8 @@ jobs:
         with:
           compiler: ldc-1.41.0
 
-      # Build-time only: these are copied into the package, which must not need Homebrew.
-      - name: Install libraries to bundle
-        run: |
-          brew install libimobiledevice libplist openssl@3
-          brew list --versions libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 openssl@4 || true
+      - name: Install runtime libraries (for the smoke tests)
+        run: brew install libimobiledevice libplist openssl@3
 
       - name: Write version file
         uses: ./.github/actions/write-version-file
@@ -60,76 +56,37 @@ jobs:
           file bin/sideloader
           lipo -archs bin/sideloader | grep -qw "${{ matrix.arch }}"
 
-      # sideloader + lib/ with every library it loads (Sideloader looks in
-      # @executable_path/lib first), so it runs on a Mac without Homebrew.
-      - name: Package
-        run: |
-          pkg="sideloader-macos-${{ matrix.arch }}"
-          mkdir -p "dist/$pkg/lib"
-          cp bin/sideloader "dist/$pkg/"
-          python3 .github/scripts/bundle-macos-libs.py "dist/$pkg/lib" "$(brew --prefix)" \
-            libimobiledevice-1.0.6.dylib libusbmuxd-2.0.7.dylib 'libplist-2.0.[0-9]*.dylib' \
-            libssl.3.dylib libcrypto.3.dylib
-          codesign --force --sign - "dist/$pkg/sideloader"
-          ls -la "dist/$pkg" "dist/$pkg/lib"
-          tar -czf "dist/$pkg.tar.gz" -C dist "$pkg"
-          (cd dist && shasum -a 256 "$pkg.tar.gz" > "$pkg.tar.gz.sha256")
-          cat "dist/$pkg.tar.gz.sha256"
+      - name: Show libplist version
+        run: brew list --versions libplist libimobiledevice libusbmuxd openssl@3
 
-      # Everything below runs the package exactly as a user would: unpacked into a
-      # fresh folder, with the Homebrew copies of its libraries uninstalled.
-      - name: Remove Homebrew's copies of the bundled libraries
-        run: |
-          brew uninstall --ignore-dependencies libimobiledevice libimobiledevice-glue libusbmuxd libtatsu libplist openssl@3 openssl@4 || true
-          if ls "$(brew --prefix)"/lib | grep -E '^lib(imobiledevice|usbmuxd|plist|tatsu)|^lib(ssl|crypto)\.[34]'; then
-            echo "Homebrew copies are still installed"; exit 1
-          fi
-          echo "No Homebrew copies left."
-          mkdir -p "$RUNNER_TEMP/user" && tar -xzf "dist/sideloader-macos-${{ matrix.arch }}.tar.gz" -C "$RUNNER_TEMP/user"
-
+      # No DYLD_* variables: Sideloader must find Homebrew's libraries by itself.
       - name: Smoke test
-        run: |
-          cd "$RUNNER_TEMP/user/sideloader-macos-${{ matrix.arch }}"
-          ./sideloader --help
-
-      # Loads libimobiledevice (and through it libusbmuxd, libplist and OpenSSL):
-      # with no iPhone attached it must get as far as "Please connect a device."
-      - name: libimobiledevice check (no device)
-        run: |
-          cd "$RUNNER_TEMP/user/sideloader-macos-${{ matrix.arch }}"
-          set +e; ./sideloader tool list > tool.log 2>&1; set -e
-          sed 's/\x1b\[[0-9;]*m//g' tool.log
-          grep -q 'Please connect a device.' tool.log
-          ! grep -q 'LibraryLoadingException' tool.log
+        run: ./bin/sideloader --help
 
       # Anonymous flow, no Apple ID: downloads Apple's libraries and provisions the
       # machine with Apple over verified TLS, then stops at "not logged in".
       - name: Verified TLS check (no Apple ID)
         run: |
-          cd "$RUNNER_TEMP/user/sideloader-macos-${{ matrix.arch }}"
           export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config"
           set +e
-          ./sideloader app-id list --debug > raw.log 2>&1
+          ./bin/sideloader app-id list --debug > raw.log 2>&1
           echo "sideloader exit code: $?"
           set -e
           tr '\r' '\n' < raw.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > tls-check.log
-          grep -E 'OpenSSL library|server.tls|provision(ed|ing)|logged in|rror' tls-check.log | grep -v 'CALL //' | head -40
-          echo "--- last lines ---"; grep -v 'CALL //' tls-check.log | tail -15
-          grep -q 'Using OpenSSL library: @executable_path/lib/libssl.3.dylib' tls-check.log
+          grep -E 'server.tls|provision(ed|ing)|logged in|rror' tls-check.log | grep -v 'CALL //' | head -40
+          echo "--- last lines ---"; grep -v 'CALL //' tls-check.log | tail -25
           grep -q 'Verified TLS connection to apps.mzstatic.com' tls-check.log
           grep -q 'Verified TLS connection to gsa.apple.com' tls-check.log
           grep -q 'Device provisioned successfully' tls-check.log
 
-      # Without the bundled OpenSSL, the TLS code must fall back to the LibreSSL that
-      # macOS ships.
+      # Without Homebrew's OpenSSL, the TLS code must fall back to the LibreSSL that
+      # macOS ships (what users of the binaries without openssl@3 will get).
       - name: Verified TLS check with macOS's LibreSSL
         run: |
-          cp -R "$RUNNER_TEMP/user/sideloader-macos-${{ matrix.arch }}" "$RUNNER_TEMP/libressl"
-          cd "$RUNNER_TEMP/libressl"
-          rm lib/libssl.3.dylib lib/libcrypto.3.dylib
+          brew uninstall --ignore-dependencies openssl@3
           export SIDELOADER_CONFIG_DIR="$RUNNER_TEMP/sideloader-config-libressl"
           set +e
-          ./sideloader app-id list --debug > raw-libressl.log 2>&1
+          ./bin/sideloader app-id list --debug > raw-libressl.log 2>&1
           echo "sideloader exit code: $?"
           set -e
           tr '\r' '\n' < raw-libressl.log | grep -v '% completed' | sed 's/\x1b\[[0-9;]*m//g' > libressl.log
@@ -139,12 +96,19 @@ jobs:
           grep -q 'Verified TLS connection to gsa.apple.com' libressl.log
           grep -q 'Device provisioned successfully' libressl.log
 
+      - name: Package
+        run: |
+          mkdir -p dist
+          name="sideloader-cli-macos-${{ matrix.arch }}"
+          cp bin/sideloader "dist/$name"
+          chmod +x "dist/$name"
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+          cat "dist/$name.sha256"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: sideloader-macos-${{ matrix.arch }}
-          path: |
-            dist/*.tar.gz
-            dist/*.tar.gz.sha256
+          name: sideloader-cli-macos-${{ matrix.arch }}
+          path: dist/*
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
