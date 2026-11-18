@@ -449,11 +449,9 @@ private final class OpenSSLLib {
 
     private this() {
         version (OSX) {
-            // Prefer the OpenSSL 3 bundled next to the executable (lib/), then Homebrew's,
-            // then the versioned LibreSSL macOS ships. (The unversioned
-            // /usr/lib/libssl.dylib aborts the process when loaded.)
+            // Prefer Homebrew's OpenSSL 3, then the versioned LibreSSL macOS ships.
+            // (The unversioned /usr/lib/libssl.dylib aborts the process when loaded.)
             enum string[2][] candidates = [
-                ["@executable_path/lib/libssl.3.dylib", "@executable_path/lib/libcrypto.3.dylib"],
                 ["/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib", "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"],
                 ["/usr/local/opt/openssl@3/lib/libssl.3.dylib", "/usr/local/opt/openssl@3/lib/libcrypto.3.dylib"],
                 ["libssl.3.dylib", "libcrypto.3.dylib"],
